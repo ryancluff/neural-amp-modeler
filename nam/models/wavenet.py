@@ -22,6 +22,7 @@ import numpy as _np
 import torch as _torch
 import torch.nn as _nn
 
+from ._abc import ImportsWeights as _ImportsWeights
 from ._activations import get_activation as _get_activation
 from .base import BaseNet as _BaseNet
 from ._names import ACTIVATION_NAME as _ACTIVATION_NAME, CONV_NAME as _CONV_NAME
@@ -327,6 +328,8 @@ class _WaveNet(_nn.Module):
         return weights.detach().cpu().numpy()
 
     def import_weights(self, weights: _torch.Tensor):
+        if self._head is not None:
+            raise NotImplementedError("Head importing isn't implemented yet.")
         i = 0
         for layer in self._layers:
             i = layer.import_weights(weights, i)
@@ -343,7 +346,7 @@ class _WaveNet(_nn.Module):
         return head_input if self._head is None else self._head(head_input)
 
 
-class WaveNet(_BaseNet):
+class WaveNet(_BaseNet, _ImportsWeights):
     def __init__(self, *args, sample_rate: _Optional[float] = None, **kwargs):
         super().__init__(sample_rate=sample_rate)
         self._net = _WaveNet(*args, **kwargs)
@@ -356,67 +359,6 @@ class WaveNet(_BaseNet):
     def receptive_field(self) -> int:
         return self._net.receptive_field
 
-    def export_cpp_header(self, filename: _Path):
-        with _TemporaryDirectory() as tmpdir:
-            tmpdir = _Path(tmpdir)
-            WaveNet.export(self, _Path(tmpdir))  # Hacky...need to work w/ CatWaveNet
-            with open(_Path(tmpdir, "model.nam"), "r") as fp:
-                _c = _json.load(fp)
-            version = _c["version"]
-            config = _c["config"]
-
-            if config["head"] is not None:
-                raise NotImplementedError("No heads yet")
-            # head_scale
-            # with_head
-            # parametric
-
-            # String for layer array params:
-            s_lap = (
-                "const std::vector<wavenet::LayerArrayParams> LAYER_ARRAY_PARAMS{\n",
-            )
-            for i, lc in enumerate(config["layers"], 1):
-                s_lap_line = (
-                    f'  wavenet::LayerArrayParams({lc["input_size"]}, '
-                    f'{lc["condition_size"]}, {lc["head_size"]}, {lc["channels"]}, '
-                    f'{lc["kernel_size"]}, std::vector<int> '
-                    "{"
-                    + ", ".join([str(d) for d in lc["dilations"]])
-                    + "}, "
-                    + (
-                        f'"{lc["activation"]}", {str(lc["gated"]).lower()}, '
-                        f'{str(lc["head_bias"]).lower()})'
-                    )
-                )
-                if i < len(config["layers"]):
-                    s_lap_line += ","
-                s_lap_line += "\n"
-                s_lap += (s_lap_line,)
-            s_lap += ("};\n",)
-            s_parametric = self._export_cpp_header_parametric(config.get("parametric"))
-            with open(filename, "w") as f:
-                f.writelines(
-                    (
-                        "#pragma once\n",
-                        "// Automatically-generated model file\n",
-                        "#include <vector>\n",
-                        '#include "json.hpp"\n',
-                        '#include "wavenet.h"\n',
-                        f'#define PYTHON_MODEL_VERSION "{version}"\n',
-                    )
-                    + s_lap
-                    + (
-                        f'const float HEAD_SCALE = {config["head_scale"]};\n',
-                        "const bool WITH_HEAD = false;\n",
-                    )
-                    + s_parametric
-                    + (
-                        "std::vector<float> PARAMS{"
-                        + ", ".join([f"{w:.16f}f" for w in _c["weights"]])
-                        + "};\n",
-                    )
-                )
-
     def import_weights(self, weights: _Sequence[float]):
         if not isinstance(weights, _torch.Tensor):
             weights = _torch.Tensor(weights)
@@ -424,11 +366,6 @@ class WaveNet(_BaseNet):
 
     def _export_config(self):
         return self._net.export_config()
-
-    def _export_cpp_header_parametric(self, config):
-        if config is not None:
-            raise ValueError("Got non-None parametric config")
-        return ("nlohmann::json PARAMETRIC {};\n",)
 
     def _export_weights(self) -> _np.ndarray:
         return self._net.export_weights()
