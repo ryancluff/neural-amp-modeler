@@ -1,0 +1,13 @@
+**/__pycache__
+**/.git
+**/.github
+**/.venv
+
+build
+docs
+environments
+neural_amp_modeler.egg-info
+tests
+
+Dockerfile
+.dockerignore

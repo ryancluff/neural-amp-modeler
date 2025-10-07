@@ -1,0 +1,5 @@
+services:
+  nam:
+    build:
+      context: .
+    image: forge-nam:0.1
